@@ -4,26 +4,44 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
 
 public class Main {
 
     private static final String USER_AGENT = "Mozilla/5.0 (iPad; CPU OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1";
-    private static final String PHPSESS_ID = "PHPSESSID";
+    private static final String JSESSIONID = "JSESSIONID";
 
     public static void main(String[] args) throws IOException {
-        /*String phpsessId = mainRequest();
-        if (phpsessId == null) {
-            System.out.println("ERROR");
-            return;
-        }
+        // String jsessionid = saveImage("new.jpg");
 
-        saveImage(phpsessId, "new.jpg");*/
+        String vin = "11111111111111111111";
+        String captchaWord = "94746";
+        String sessionId = "35493B526CCFED4B8578BCE3593F02B2";
 
-        clientRequest("11111111111111111111", "37072", "floevoi757tbh7fohp75l27f12");
+        clientRequest(vin, captchaWord, CheckType.HISTORY, sessionId);
+        clientRequest(vin, captchaWord, CheckType.WANTED, sessionId);
+        clientRequest(vin, captchaWord, CheckType.RESTRICT, sessionId);
+        clientRequest(vin, captchaWord, CheckType.DTP, sessionId);
+
+        //
+        // history
+        //{"message":"Прошло слишком много времени с момента загрузки картинки, повторите попытку","status":201}
+        //{"RequestResult":null,"vin":"11111111111111111111","regnum":null,"message":"404:No data found","status":404}
+
+        // http://check.gibdd.ru/proxy/check/auto/wanted
+        // checkType:wanted
+        //{"RequestResult":{"records":[],"count":1,"error":0},"vin":"11111111111111111111","status":200}
+
+
+        // restrict
+        // {"RequestResult":{"records":[],"count":0,"error":0},"vin":"11111111111111111111","status":200}
+
+        // DTP
+        // {"RequestResult":{"errorDescription":"","statusCode":1,"Accidents":[]},"vin":"11111111111111111111","status":200}
     }
 
-    private static String mainRequest() throws IOException {
+    private static String getSessionId() throws IOException {
         URL url = new URL("http://www.gibdd.ru/check/auto/");
         HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
         urlConnection.setRequestMethod("GET");
@@ -31,35 +49,45 @@ public class Main {
 
         writeResponseToHtml(urlConnection, false);
 
-        return getPhpsessIdByUrlConnection(urlConnection);
+        return getSessionIdByURLConnection(urlConnection);
     }
 
-    private static String getPhpsessIdByUrlConnection(URLConnection urlConnection) {
-        String resultPhpsessId = null;
+    private static String getSessionIdByURLConnection(URLConnection urlConnection) {
         Map<String, List<String>> headerFields = urlConnection.getHeaderFields();
+
+        System.out.println("find session id in headerFields");
         for (Map.Entry<String, List<String>> next : headerFields.entrySet()) {
             String key = next.getKey();
-            List<String> value = next.getValue();
-            if (key != null && key.equals("Set-Cookie")) {
-                System.out.println("key: " + key);
-                for (String s : value) {
-                    if (s.startsWith(PHPSESS_ID)) {
-                        int start = s.indexOf("=") + 1;
-                        int endIndex = s.indexOf(";");
-                        resultPhpsessId = s.substring(start, endIndex);
-                    }
-                }
+            if (isCookie(key)) {
+                return findSessionId(next.getValue());
             }
         }
-        System.out.println("resultPhpsessId: " + resultPhpsessId);
-        return resultPhpsessId;
+
+        throw new NotFoundResult(String.format("can't find %s id", JSESSIONID));
+    }
+
+    private static String findSessionId(List<String> value) {
+        for (String s : value) {
+            if (s.startsWith(JSESSIONID)) {
+                int start = s.indexOf("=") + 1;
+                int endIndex = s.indexOf(";");
+                String result = s.substring(start, endIndex);
+                System.out.println(JSESSIONID + ": " + result);
+                return result;
+            }
+        }
+        throw new NotFoundResult(String.format("can't find %s id", JSESSIONID));
+    }
+
+    private static boolean isCookie(String key) {
+        return key != null && (key.equals("Set-Cookie") || key.equals("Cookie"));
     }
 
     private static void printHeadersByUrlConnection(URLConnection urlConnection) {
         Map<String, List<String>> headerFields = urlConnection.getHeaderFields();
         for (Map.Entry<String, List<String>> next : headerFields.entrySet()) {
             String key = next.getKey();
-            if(key != null && key.equals("Set-Cookie")) {
+            if (key != null && key.equals("Set-Cookie")) {
                 List<String> value = next.getValue();
                 System.out.println("key:" + key);
                 System.out.println("value:" + value);
@@ -67,8 +95,8 @@ public class Main {
         }
     }
 
-    private static void clientRequest(String vin, String captchaWord, String phpsessid) throws IOException {
-        String client = "http://www.gibdd.ru/proxy/check/auto/2.0/client.php";
+    private static void clientRequest(String vin, String captchaWord, CheckType checkType, String jsessionid) throws IOException {
+        String client = String.format("http://check.gibdd.ru/proxy/check/auto/%s", checkType.getValue());
         URL url = new URL(client);
         HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
         urlConnection.setRequestMethod("POST");
@@ -80,13 +108,13 @@ public class Main {
         urlConnection.setRequestProperty("Accept-Encoding", "gzip, deflate, sdch");
         urlConnection.setRequestProperty("Accept-Language", "ru,en-US;q=0.8,en;q=0.6");
         urlConnection.setRequestProperty("Connection", "keep-alive");
-        String cookie = String.format("PHPSESSID=%s; BITRIX_SM_IP_REGKOD=77; BITRIX_SM_REGKOD=00; BITRIX_SM_METOD=GEO;", phpsessid);
+        String cookie = String.format("JSESSIONID=%s; _ga=GA1.2.1593191729.1468750977; _ym_uid=1468750977525215266; _ym_isad=1", jsessionid);
         urlConnection.setRequestProperty("Cookie", cookie);
 
         // Send post request
         urlConnection.setDoOutput(true);
         DataOutputStream wr = new DataOutputStream(urlConnection.getOutputStream());
-        String urlParameters = String.format("vin=%s&captchaWord=%s&captchaCode=", vin, captchaWord);
+        String urlParameters = String.format("vin=%s&captchaWord=%s&checkType=%s", vin, captchaWord, checkType);
         wr.writeBytes(urlParameters);
         wr.flush();
         wr.close();
@@ -95,6 +123,7 @@ public class Main {
         int responseCode = urlConnection.getResponseCode();
         System.out.println("\nSending 'POST' request to URL : " + url);
         System.out.println("Post parameters : " + urlParameters);
+        System.out.println("Cookie : " + cookie);
         System.out.println("Response Code : " + responseCode);
         writeResponseToHtml(urlConnection, true);
 
@@ -128,9 +157,8 @@ public class Main {
         }
     }
 
-    private static void saveImage(String phpsessId, String destinationFile) throws IOException {
-        String imageUrl = "http://www.gibdd.ru/proxy/check/getCaptcha.php?PHPSESSID=" + phpsessId;
-        URL url = new URL(imageUrl);
+    private static String saveImage(String destinationFile) throws IOException {
+        URL url = new URL("http://check.gibdd.ru/proxy/captcha.jpg");
         HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
         urlConnection.setRequestMethod("GET");
         urlConnection.setRequestProperty("User-Agent", USER_AGENT);
@@ -141,9 +169,7 @@ public class Main {
         urlConnection.setRequestProperty("Accept-Encoding", "gzip, deflate, sdch");
         urlConnection.setRequestProperty("Accept-Language", "ru,en-US;q=0.8,en;q=0.6");
         urlConnection.setRequestProperty("Connection", "keep-alive");
-
-        String cookie = String.format("captchaSessionId=%s; _ym_uid=1462452903560071241; PHPSESSID=%s; _ym_isad=1; _ga=GA1.2.74263411.1462452903; BITRIX_SM_REGKOD=00; BITRIX_SM_IP_REGKOD=77; siteType=pda", phpsessId, phpsessId);
-        urlConnection.setRequestProperty("Cookie", cookie);
+        urlConnection.setRequestProperty("Cookie", "_ga=GA1.2.1593191729.1468750977; _ym_uid=1468750977525215266; _ym_isad=1");
 
         InputStream is = urlConnection.getInputStream();
 
@@ -160,5 +186,23 @@ public class Main {
         os.close();
 
         printHeadersByUrlConnection(urlConnection);
+        return getSessionIdByURLConnection(urlConnection);
+    }
+
+    private enum CheckType {
+        HISTORY("history"),
+        WANTED("wanted"),
+        RESTRICT("restrict"),
+        DTP("dtp");
+
+        private final String value;
+
+        CheckType(String value) {
+            this.value = value;
+        }
+
+        public String getValue() {
+            return value;
+        }
     }
 }
